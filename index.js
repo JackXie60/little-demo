@@ -1,128 +1,129 @@
-import Vue from "vue"
-
-function forEach(obj, callBack) {
-    Object.keys(obj).forEach(objKey => {
-        callBack(objKey, obj[objKey])
-    })
-}
-class ModuleCollection {
-    constructor(options) {
-        //格式化options配置,生成如下配置
-        // {
-        //     _raw:rootModule,
-        //     state:rootModule.state,
-        //     _children:[]
-        // }
-        this.register([], options);
-    }
-    register(path, rootModule) {
-        let rawModule = {
-            _raw: rootModule,
-            state: rootModule.state,
-            _children: []
-        };
-        if (!this.root) {
-            this.root = rawModule;
-        }else{
-            const parentModule = path.slice(0,-1).reduce((rootModule,curModuleName)=>{
-                return rootModule._children[curModuleName];
-            },this.root)
-            parentModule._children[path[path.length-1]] = rawModule;
+const PENDING = "pending",
+    RESOLVE = "resolve",
+    REJECT = "reject",
+    PromiseStatus = Symbol("promiseStatus"),
+    PromiseValue = Symbol("PromiseValue"),
+    changeStatus = Symbol("changeStatus"),
+    thenables = Symbol("thenables"),
+    linkPromise = Symbol("linkPromise"),
+    settlePromise = Symbol("settlePromise"),
+    catchables = Symbol("catchables");
+class MyPromise {
+    [changeStatus](data, status, queue) {
+        if (this[PromiseStatus] !== PENDING) {
+            return;
         }
-        if (rootModule.modules) {
-            forEach(rootModule.modules, (moduleName, module) => {
-                this.register(path.concat(moduleName), module);
-            })
+        this[PromiseStatus] = status;
+        this[PromiseValue] = data;
+        queue.forEach(fn => fn(data));
+        if (typeof handler !== "function") {
+            return;
         }
     }
-}
-function installModules(store,rooState,path,rawModule){
-    //设置state
-    let state = rawModule.state;
-    if(path.length>0){
-        const parent = path.slice(0,-1).reduce((root,cur)=>{
-            return root[cur]
-        },rooState)
-        Vue.set(parent,path[path.length-1],rawModule.state)
-    }
-    //设置getter
-    let getters = rawModule._raw.getters;
-    if(getters){
-        forEach(getters,(getterName,value)=>{
-            Object.defineProperty(store.getters,getterName,{
-                get:()=>{
-                    return value(state);
-                }
-            })
-        })
-    };
-    let mutations = rawModule._raw.mutations;
-    if(mutations){
-        forEach(mutations,(mutationName,value)=>{
-            store.mutations[mutationName] ||(store.mutations[mutationName] = []);
-            store.mutations[mutationName].push((payload)=>{
-                value(state,payload)
-            })
-        })
-    }
-    let actions = rawModule._raw.actions;
-    if(actions){
-        forEach(actions,(actionName,value)=>{
-            store.actions[actionName] ||(store.actions[actionName] = []);
-            store.actions[actionName].push((payload)=>{
-                value(store,payload)
-            })
-        })
-    }
-    //遍历子孩子
-    if(rawModule._children){
-        forEach(rawModule._children,(childrenName,value)=>{
-            rawModule = value;
-            installModules(store,rooState,path.concat(childrenName),rawModule);
-        })
-    }
-}
-class Store {
-    //将options中state转换为响应式
-    constructor(options) {
-        this.vm = new Vue({
-            data: {
-                state: options.state
+    constructor(executor) {
+            this[thenables] = [];
+            this[catchables] = [];
+            this[PromiseStatus] = PENDING;
+            this[PromiseValue] = undefined;
+            const resolve = (data) => {
+                this[changeStatus](data, RESOLVE, this[thenables]);
             }
-        });
-        // let getters = options.getters;
-        this.getters = {};
-        this.mutations = {};
-        this.actions = {};
-        const moduleCollection = new ModuleCollection(options);
-        const rawModule = moduleCollection.root;
-        installModules(this,this.state,[],rawModule)
-    }
-    get state() {
-        return this.vm.state;
-    };
-    commit = (mutationName, payload) => {
-        this.mutations[mutationName].forEach(fn=>fn(payload))
-    }
-    dispatch = (actionName, payload) => {
-        this.actions[actionName].forEach(fn=>fn(payload));
-    }
-}
-
-function install(Vue) { //参数是vue的构造函数，使用Vue.use会默认执行install方法
-    //为每个vue实例在创建之前混入$store属性
-    Vue.mixin({
-        beforeCreate() {
-            //如果是根实例，那么在身上绑定$store,不是根实例，则查找父级身上的$store绑定到自己身上
-            if (this.$options.store) {
-                this.$store = this.$options.store
+            const reject = (reson) => {
+                this[changeStatus](reson, REJECT, this[catchables]);
+            }
+            try {
+                executor(resolve, reject);
+            } catch (err) {
+                reject(err)
+            }
+        }
+        [linkPromise](thenable, catchable) {
+            return new MyPromise((resolve, reject) => {
+                this[settlePromise](RESOLVE, (data) => {
+                    try {
+                        const result = thenable(data);
+                        if (result instanceof MyPromise) {
+                            result.then(d => {
+                                resolve(d);
+                            }, err => {
+                                reject(err);
+                            })
+                        } else {
+                            resolve(result)
+                        }
+                    } catch (err) {
+                        reject(err);
+                    }
+                }, this[thenables]);
+                this[settlePromise](REJECT, (data) => {
+                    try {
+                        const result = catchable(data);
+                        result.then(d => {
+                            resolve(d);
+                        }).catch(err => {
+                            reject(err);
+                        })
+                        resolve(result)
+                    } catch (err) {
+                        reject(err);
+                    }
+                }, this[catchables]);
+            })
+        }
+        [settlePromise](status, fn, queue) {
+            if (typeof fn !== "function") {
+                return;
+            }
+            if (this[PromiseStatus] === status) {
+                setTimeout(() => {
+                    fn(this[PromiseValue]);
+                }, 0);
             } else {
-                this.$store = this.$parent && this.$parent.$store
+                queue.push(fn);
             }
         }
-    })
-}
-export default {
-    Store,
-    install,
+    then = (thenable, catchable) => {
+        return this[linkPromise](thenable, catchable);
+    }
+    catch = (catchable) => {
+        return this[linkPromise](undefined, catchable);
+    }
+    //全部resolve返回所有resolve的结果，其中只要有一个为reject返回这个reject的值
+    static all(proms) {
+        return new MyPromise((resolve, reject) => {
+            const results = proms.map(p => {
+                let obj = {
+                    result: undefined,
+                    isResolved: false,
+                };
+                p.then(data => {
+                    obj.result = data;
+                    obj.isResolved = true;
+                    const unresolvedArr = results.filter(obj => !obj.isResolved);
+                    if (unresolvedArr.length === 0) {
+                        resolve(results.map(item => item.result));
+                    }
+                }).catch(err => {
+                    reject(err)
+                })
+                return obj;
+            })
+        })
+    }
+    static race() {
+
+    }
+    static resolve(data) {
+        if (data instanceof MyPromise) {
+            return data;
+        }
+        return new MyPromise((resolve, reject) => {
+            resolve(data);
+        })
+    }
+    static reject(data) {
+        return new MyPromise((resolve, reject) => {
+            reject(data);
+        })
+    }
 }

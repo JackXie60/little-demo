@@ -1,2 +1,2 @@
-# vuex简单实现
-getter,mutations,actions,modules,commit,dispatch功能
+# 手写Promise
+then,catch,api串联，all,resolve,reject
