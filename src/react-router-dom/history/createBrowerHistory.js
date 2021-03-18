@@ -5,12 +5,12 @@ import ListenersManager from "./ListenersManager";
  * 创建一个浏览器history api的history对象
  * @param {*} options 
  */
-export default function createBroserHistory(options) {
+export default function createBroserHistory(options={}) {
     const {
         basename = "",
-            forceRefresh = false,
-            keyLength = 6,
-            getUserConfirmation = (message, callback) => callback(window.confirm(message))
+        forceRefresh = false,
+        keyLength = 6,
+        getUserConfirmation = (message, callback) => callback(true)
     } = options
     const listenersManager = new ListenersManager();
     const blockManager = new BlockManager(getUserConfirmation);
@@ -122,7 +122,7 @@ export default function createBroserHistory(options) {
         return blockManager.block(promt);
     }
     //createHref函数
-    function createHref(location){
+    function createHref(location) {
         return basename + location.pathname;
     }
     const history = {
@@ -190,10 +190,3 @@ function createLocationFromPathInfo(pathInfo, basename) {
         state: pathInfo.state
     }
 }
-window.createLocationFromPathInfo = createLocationFromPathInfo;
-const result = createBroserHistory({
-    basename: "/news"
-})
-window.h = result;
-console.log("测试");
-console.log(result)

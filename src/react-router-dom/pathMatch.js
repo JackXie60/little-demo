@@ -23,7 +23,7 @@ function getOptions(options){
     const defaultOptions = {
         sensitive:false,
         strict:false,
-        exact:true,
+        exact:false,
     };
     const opts = {...defaultOptions,...options};
     return {
